@@ -1,5 +1,7 @@
 # Unity下安卓日志工具
 ---
+![效果图](Assets/Sample.gif)
+---
 ## 使用说明
 - 从其他地方复制日志到系统剪贴板，点击Parse按钮，等待数秒后就会格式好所有的日志.
 > 这里的其他地方指的是 Android Device Monitor中的LogCat里面全选复制 或者是 cmd下的adb logcat命令返回的日志.
