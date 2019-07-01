@@ -91,6 +91,7 @@ public class AndroidLogCatWindow : EditorWindow
             {
                 pInstance.mSelectId = id;
                 pInstance.mSelectInfo = this;
+                pInstance.mDetailScrollPos = Vector2.zero;
                 GUI.FocusControl(string.Empty);
                 pInstance.Repaint();
             }
@@ -251,10 +252,10 @@ public class AndroidLogCatWindow : EditorWindow
         }
         EditorGUILayout.EndScrollView();
 
-        mDetailScrollPos = GUILayout.BeginScrollView(mDetailScrollPos);
+        mDetailScrollPos = EditorGUILayout.BeginScrollView(mDetailScrollPos, GUILayout.Height(position.size.y * mSliderValue - 25));
         var tMsg = mSelectInfo == null ? string.Empty : mSelectInfo.GetTrace();
-        EditorGUILayout.SelectableLabel(tMsg, EditorStyles.textArea, GUILayout.Height(position.size.y * mSliderValue));
-        GUILayout.EndScrollView();
+        EditorGUILayout.SelectableLabel(tMsg, EditorStyles.textArea, GUILayout.Height(GUI.skin.textArea.CalcHeight(new GUIContent(tMsg), position.width)));
+        EditorGUILayout.EndScrollView();
 
         //End VerticalSplit
         if (mEndVerticalSplit != null)
@@ -304,13 +305,13 @@ public class AndroidLogCatWindow : EditorWindow
                     tChange = true;
                 }
 
+                UpdateContentScrollPos();
+
                 if (tChange)
                 {
                     GUI.FocusControl(string.Empty);
                     Event.current.Use();
                 }
-
-                UpdateContentScrollPos();
                 break;
                 //这里还要过滤输入框选中的情况
                 //case EventType.KeyUp:
@@ -318,8 +319,10 @@ public class AndroidLogCatWindow : EditorWindow
                 //    {
                 //        ParseText();
                 //    }
-                //    break;
+                //break;
         }
+
+        if (Event.current.type == EventType.KeyUp) Repaint();
     }
 
     /// <summary>
