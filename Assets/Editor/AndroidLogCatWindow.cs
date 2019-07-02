@@ -2,6 +2,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
@@ -67,11 +68,15 @@ public class AndroidLogCatWindow : EditorWindow
             var tDrawRect = EditorGUILayout.GetControlRect(true, cItemHeight);
             if (!tPosition.Overlaps(tDrawRect)) return;
 
+            if (pInstance.mSelectInfo == null)
+            {
+                pInstance.mSelectInfo = this;
+            }
+
             var tColorStr = (pIndex & 1) == 1 ? "#DDDDDD" : "#9C9C9C";
-            if (pInstance.mSelectId == id)
+            if (pInstance.selectId == id)
             {
                 tColorStr = "#3E5F96";
-                pInstance.mSelectInfo = this;
             }
             var tColor = Color.grey;
             ColorUtility.TryParseHtmlString(tColorStr, out tColor);
@@ -89,7 +94,6 @@ public class AndroidLogCatWindow : EditorWindow
             tBtnRect.size = new Vector2(tBtnRect.size.x, tBtnRect.size.y + 10);
             if (GUI.Button(tBtnRect, string.Empty, GUIStyle.none))
             {
-                pInstance.mSelectId = id;
                 pInstance.mSelectInfo = this;
                 pInstance.mDetailScrollPos = Vector2.zero;
                 GUI.FocusControl(string.Empty);
@@ -130,7 +134,7 @@ public class AndroidLogCatWindow : EditorWindow
     Vector2 mContentScrollPos;
     Vector2 mContentScrollSize;
     Vector2 mDetailScrollPos;
-    int mSelectId = 0;
+    int mSelectIndex = 0;
     Info mSelectInfo;
     float mSliderValue = 0.5F;
     string mSearchText = string.Empty;
@@ -157,12 +161,20 @@ public class AndroidLogCatWindow : EditorWindow
     bool mEnableError = true;
     Process mADBProcess;
 
+    public int selectId
+    {
+        get
+        {
+            return mSelectInfo == null ? -1 : mSelectInfo.id;
+        }
+    }
+
     [MenuItem("Window/AndroidLogCatWindow")]
     static public void ShowWindow()
     {
         var tView = CreateInstance<AndroidLogCatWindow>();
         tView.titleContent = new GUIContent("AndroidLogCat", "安卓日志工具.\n使用说明：\n1、从其他地方复制日志到系统剪贴板，点击Parse按钮，等待数秒后就会格式好所有的日志.\n2、支持adb连接实时打印日志" +
-            "\n\n使用技巧：\n1、支持上下箭头、Home键、End键改变日志的显示.\n2、支持搜索指定关键字（不区分大小写），然后选择某条日志后，点输入框的×来定位到刚刚选中的日志.\n3、跳转到选中：置顶当前选中的日志\n\n目前已知问题：\n1、启动ADB后，无法正常关闭ADB，需要手动关闭ADB");
+            "\n\n使用技巧：\n1、支持上下箭头、Home键、End键改变日志的显示.\n2、支持搜索指定关键字（不区分大小写），然后选择某条日志后，点输入框的×来定位到刚刚选中的日志.\n3、跳转到选中：置顶当前选中的日志\n\n目前已知问题：\n1、Unity2017.3.0f2以下版本存在部分中文乱码，建议用Unity2017.3.0f2及以上版本");
         tView.Show();
     }
 
@@ -175,21 +187,6 @@ public class AndroidLogCatWindow : EditorWindow
         var tSplitterGUILayoutType = typeof(EditorWindow).Assembly.GetType("UnityEditor.SplitterGUILayout");
         mBeginVerticalSplit = tSplitterGUILayoutType.GetMethod("BeginVerticalSplit", BindingFlags.Static | BindingFlags.Public, null, new Type[] { tSplitterState, typeof(GUILayoutOption[]) }, null);
         mEndVerticalSplit = tSplitterGUILayoutType.GetMethod("EndVerticalSplit", BindingFlags.Static | BindingFlags.Public);
-    }
-
-    void UpdateGUIStyle()
-    {
-        if (mContentStyle == null)
-        {
-            mContentStyle = new GUIStyle(EditorStyles.helpBox);
-            mContentStyle.fontSize = 14;
-            mContentStyle.wordWrap = false;
-            mContentStyle.richText = true;
-        }
-        EditorStyles.textArea.wordWrap = true;
-        EditorStyles.textArea.richText = true;
-        EditorStyles.helpBox.wordWrap = false;
-        EditorStyles.helpBox.richText = true;
     }
 
     void OnGUI()
@@ -279,50 +276,55 @@ public class AndroidLogCatWindow : EditorWindow
         switch (Event.current.type)
         {
             case EventType.KeyDown:
-                var tChange = false;
                 if (tKeyCode == KeyCode.UpArrow)
                 {
-                    if (mSelectId > 0) mSelectId--;
-                    else mSelectId = 0;
-                    tChange = true;
+                    if (mSelectIndex > 0) mSelectIndex--;
                 }
                 else if (tKeyCode == KeyCode.DownArrow)
                 {
-                    if (mSelectId < mShowInfos.Count - 1)
-                    {
-                        mSelectId++;
-                        tChange = true;
-                    }
+                    if (mSelectIndex < mShowInfos.Count - 1)
+                        mSelectIndex++;
                 }
                 else if (tKeyCode == KeyCode.Home)
                 {
-                    mSelectId = 0;
-                    tChange = true;
+                    mSelectIndex = mShowInfos.Count > 0 ? 0 : -1;
                 }
                 else if (tKeyCode == KeyCode.End)
                 {
-                    mSelectId = mShowInfos.Count - 1;
-                    tChange = true;
+                    mSelectIndex = mShowInfos.Count > 0 ? mShowInfos.Count - 1 : -1;
                 }
 
-                UpdateContentScrollPos();
-
-                if (tChange)
+                if (mSelectIndex >= 0 && mSelectIndex < mShowInfos.Count)
                 {
+                    mSelectInfo = mShowInfos[mSelectIndex];
+                    UpdateContentScrollPos();
                     GUI.FocusControl(string.Empty);
                     Event.current.Use();
                 }
                 break;
-                //这里还要过滤输入框选中的情况
-                //case EventType.KeyUp:
-                //    if (Event.current.control && tKeyCode == KeyCode.V)
-                //    {
-                //        ParseText();
-                //    }
-                //break;
         }
 
         if (Event.current.type == EventType.KeyUp) Repaint();
+    }
+
+    void OnDestroy()
+    {
+        StopADB();
+    }
+
+    void UpdateGUIStyle()
+    {
+        if (mContentStyle == null)
+        {
+            mContentStyle = new GUIStyle(EditorStyles.helpBox);
+            mContentStyle.fontSize = 14;
+            mContentStyle.wordWrap = false;
+            mContentStyle.richText = true;
+        }
+        EditorStyles.textArea.wordWrap = true;
+        EditorStyles.textArea.richText = true;
+        EditorStyles.helpBox.wordWrap = false;
+        EditorStyles.helpBox.richText = true;
     }
 
     /// <summary>
@@ -341,7 +343,7 @@ public class AndroidLogCatWindow : EditorWindow
         mShowInfos = new List<Info>();
         mADBMsgs = new List<string>();
         mDetailScrollPos = mContentScrollPos = Vector2.zero;
-        mSelectId = mFinishFlag = 0;
+        mSelectIndex = mFinishFlag = 0;
         mSelectInfo = null;
     }
 
@@ -536,7 +538,7 @@ public class AndroidLogCatWindow : EditorWindow
         var tCurrentRow = -1;
         for (int i = 0, imax = mShowInfos.Count; i < imax; i++)
         {
-            if (mShowInfos[i].id == mSelectId)
+            if (mShowInfos[i].id == selectId)
             {
                 tCurrentRow = i;
                 break;
@@ -648,18 +650,24 @@ public class AndroidLogCatWindow : EditorWindow
         Console.OutputEncoding = Encoding.UTF8;
 
         mADBProcess = new Process();
-        mADBProcess.StartInfo.FileName = "cmd.exe";
-        mADBProcess.StartInfo.Arguments = "/k \"adb logcat -s Unity\"";
-        //mADBProcess.StartInfo.Arguments = "/k \"chcp 65001 && adb logcat -s Unity\"";
+        mADBProcess.StartInfo.FileName = "adb.exe";
+        mADBProcess.StartInfo.Arguments = "shell";
+        mADBProcess.StartInfo.UseShellExecute = false;
+        mADBProcess.StartInfo.CreateNoWindow = true;
         mADBProcess.StartInfo.RedirectStandardError = true;
         mADBProcess.StartInfo.RedirectStandardOutput = true;
-        mADBProcess.StartInfo.UseShellExecute = false;
-        mADBProcess.StartInfo.CreateNoWindow = false;
+        mADBProcess.StartInfo.RedirectStandardInput = true;
         mADBProcess.OutputDataReceived += OnReceived;
         mADBProcess.ErrorDataReceived += OnReceived;
-        //mADBProcess.StartInfo.StandardOutputEncoding = Encoding.UTF8;
-        //mADBProcess.StartInfo.StandardErrorEncoding = Encoding.UTF8;
+        mADBProcess.StartInfo.StandardOutputEncoding = Encoding.UTF8;
+        mADBProcess.StartInfo.StandardErrorEncoding = Encoding.UTF8;
         mADBProcess.Start();
+
+        using (var tStream = mADBProcess.StandardInput)
+        {
+            tStream.WriteLine("logcat -s Unity");
+            tStream.Close();
+        }
 
         mADBProcess.BeginOutputReadLine();
         mADBProcess.BeginErrorReadLine();
@@ -701,6 +709,12 @@ public class AndroidLogCatWindow : EditorWindow
         if (e.Data == null) return;
 
         var tMsg = e.Data;
+
+#if !UNITY_2017_3_OR_NEWER
+        var tBytes = Encoding.Default.GetBytes(tMsg);
+        tMsg = Encoding.UTF8.GetString(tBytes);
+#endif
+
         lock (mADBMsgs)
         {
             mADBMsgs.Add(tMsg);
