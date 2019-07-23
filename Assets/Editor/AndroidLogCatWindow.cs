@@ -32,6 +32,7 @@ public class AndroidLogCatWindow : EditorWindow
             if (string.IsNullOrEmpty(mTrace))
             {
                 mTrace = msg + "\n" + trace;
+                mTrace = Regex.Unescape(mTrace);
             }
             return mTrace;
         }
@@ -91,9 +92,11 @@ public class AndroidLogCatWindow : EditorWindow
             EditorGUI.LabelField(tTextRect, new GUIContent(this.GetMsg()), pInstance.mContentStyle);
 
             var tBtnRect = tDrawRect;
-            tBtnRect.size = new Vector2(tBtnRect.size.x, tBtnRect.size.y + 10);
+            tBtnRect.position = new Vector2(tBtnRect.position.x, tBtnRect.position.y - 5);
+            tBtnRect.size = new Vector2(tBtnRect.size.x, tBtnRect.size.y + 5);
             if (GUI.Button(tBtnRect, string.Empty, GUIStyle.none))
             {
+                pInstance.mSelectIndex = index;
                 pInstance.mSelectInfo = this;
                 pInstance.mDetailScrollPos = Vector2.zero;
                 GUI.FocusControl(string.Empty);
@@ -120,7 +123,8 @@ public class AndroidLogCatWindow : EditorWindow
     static string[] sRegexs = new string[]
     {
         @"(?<type>\w+)/Unity\(\d+\):\s*(?<desc>.*)",
-        @"(?<type>\w+)\sUnity\s+:\s*(?<desc>.*)"
+        @"(?<type>\w+)\sUnity\s+:\s*(?<desc>.*)",
+        @"(?<type>\w+)/Unity.*?:(?<desc>.*)"
     };
 
     List<Info> mInfos1;
@@ -173,8 +177,17 @@ public class AndroidLogCatWindow : EditorWindow
     static public void ShowWindow()
     {
         var tView = CreateInstance<AndroidLogCatWindow>();
-        tView.titleContent = new GUIContent("AndroidLogCat", "安卓日志工具.\n使用说明：\n1、从其他地方复制日志到系统剪贴板，点击Parse按钮，等待数秒后就会格式好所有的日志.\n2、支持adb连接实时打印日志" +
-            "\n\n使用技巧：\n1、支持上下箭头、Home键、End键改变日志的显示.\n2、支持搜索指定关键字（不区分大小写），然后选择某条日志后，点输入框的×来定位到刚刚选中的日志.\n3、跳转到选中：置顶当前选中的日志\n\n目前已知问题：\n1、Unity2017.3.0f2以下版本存在部分中文乱码，建议用Unity2017.3.0f2及以上版本");
+        tView.titleContent = new GUIContent(
+            "AndroidLogCat", "安卓日志工具." +
+            "\n使用说明：" +
+            "\n1、从其他地方复制日志到系统剪贴板，点击转换按钮，等待数秒后就会格式好所有的日志." +
+            "\n2、支持adb连接实时打印日志" +
+            "\n\n使用技巧：" +
+            "\n1、支持上下箭头、Home键、End键改变日志的显示." +
+            "\n2、支持搜索指定关键字（不区分大小写），然后选择某条日志后，点输入框的×来定位到刚刚选中的日志." +
+            "\n3、跳转到选中：置顶当前选中的日志" +
+            "\n\n目前已知问题：" +
+            "\n1、Unity2017.3.0f2以下版本存在部分中文乱码，建议用Unity2017.3.0f2及以上版本");
         tView.Show();
     }
 
@@ -196,7 +209,7 @@ public class AndroidLogCatWindow : EditorWindow
 
         if (mFinishFlag >= mThreadCount)
         {
-            Debug.LogError("Parse Finish");
+            Debug.LogError("转换完成");
 
             mTotalInfos.AddRange(mInfos1);
             mTotalInfos.AddRange(mInfos2);
@@ -276,25 +289,35 @@ public class AndroidLogCatWindow : EditorWindow
         switch (Event.current.type)
         {
             case EventType.KeyDown:
+                var tChange = false;
                 if (tKeyCode == KeyCode.UpArrow)
                 {
-                    if (mSelectIndex > 0) mSelectIndex--;
+                    if (mSelectIndex > 0)
+                    {
+                        mSelectIndex--;
+                        tChange = true;
+                    }
                 }
                 else if (tKeyCode == KeyCode.DownArrow)
                 {
                     if (mSelectIndex < mShowInfos.Count - 1)
+                    {
                         mSelectIndex++;
+                        tChange = true;
+                    }
                 }
                 else if (tKeyCode == KeyCode.Home)
                 {
                     mSelectIndex = mShowInfos.Count > 0 ? 0 : -1;
+                    tChange = true;
                 }
                 else if (tKeyCode == KeyCode.End)
                 {
                     mSelectIndex = mShowInfos.Count > 0 ? mShowInfos.Count - 1 : -1;
+                    tChange = true;
                 }
 
-                if (mSelectIndex >= 0 && mSelectIndex < mShowInfos.Count)
+                if (tChange && mSelectIndex >= 0 && mSelectIndex < mShowInfos.Count)
                 {
                     mSelectInfo = mShowInfos[mSelectIndex];
                     UpdateContentScrollPos();
@@ -358,7 +381,7 @@ public class AndroidLogCatWindow : EditorWindow
             GUILayout.Label(new GUIContent("鼠标放上来查看说明", this.titleContent.tooltip), EditorStyles.toolbarButton, GUILayout.Width(100));
             GUILayout.Space(10);
 
-            if (GUILayout.Button("Clear", EditorStyles.toolbarButton, GUILayout.Width(50)))
+            if (GUILayout.Button("清除", EditorStyles.toolbarButton, GUILayout.Width(50)))
             {
                 ResetVarliable();
             }
@@ -367,9 +390,12 @@ public class AndroidLogCatWindow : EditorWindow
 
             GUI.backgroundColor = Color.red;
             EditorGUI.BeginDisabledGroup(mADBProcess != null);
-            if (GUILayout.Button("Parse", EditorStyles.toolbarButton, GUILayout.Width(50)))
+            if (GUILayout.Button("转换", EditorStyles.toolbarButton, GUILayout.Width(50)))
             {
-                ClickParseBtn();
+                if (EditorUtility.DisplayDialog("提示", "是否确认转换剪贴板中的日志", "确定", "取消"))
+                {
+                    ClickParseBtn();
+                }
             }
             EditorGUI.EndDisabledGroup();
             GUI.backgroundColor = Color.white;
@@ -425,6 +451,7 @@ public class AndroidLogCatWindow : EditorWindow
             if (GUI.changed)
             {
                 UpdateInfos();
+                mNextFrameLocation = true;
             }
         }
         EditorGUI.EndDisabledGroup();
@@ -545,6 +572,8 @@ public class AndroidLogCatWindow : EditorWindow
             }
         }
         if (tCurrentRow == -1) return;
+
+        mSelectIndex = tCurrentRow;
 
         var tRowHeight = Info.cItemHeight;
         mContentScrollPos.y = tRowHeight * tCurrentRow;
