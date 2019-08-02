@@ -123,8 +123,8 @@ public class AndroidLogCatWindow : EditorWindow
     static string[] sRegexs = new string[]
     {
         @"(?<type>\w+)/Unity\(\d+\):\s*(?<desc>.*)",
-        @"(?<type>\w+)\sUnity\s+:\s*(?<desc>.*)",
-        @"(?<type>\w+)/Unity.*?:(?<desc>.*)"
+        @"(?<type>\w+)\sUnity\s*:\s*(?<desc>.*)",
+        @"(?<type>\w+)/Unity\s*.*?\s*:\s*(?<desc>.*)"
     };
 
     List<Info> mInfos1;
