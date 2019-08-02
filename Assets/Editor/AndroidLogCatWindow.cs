@@ -18,6 +18,7 @@ public class AndroidLogCatWindow : EditorWindow
     class Info
     {
         public string msg { set; private get; }
+        public string tag { set; private get; }
         public MessageType type { set; get; }
         public string trace { set; private get; }
         public int index { private set; get; }
@@ -41,7 +42,7 @@ public class AndroidLogCatWindow : EditorWindow
         {
             if (string.IsNullOrEmpty(mMsg))
             {
-                mMsg = id + ": " + msg;
+                mMsg = string.Format("{0} {1}: {2}", id, tag, msg);
             }
             return mMsg;
         }
@@ -119,22 +120,25 @@ public class AndroidLogCatWindow : EditorWindow
     }
     #endregion
 
+    const string cUnityTag = "Unity";
     //适配不同log日志格式，如有新增格式，加新的正则即可
     static string[] sRegexs = new string[]
     {
-        @"(?<type>\w+)/Unity\(\d+\):\s*(?<desc>.*)",
-        @"(?<type>\w+)\sUnity\s*:\s*(?<desc>.*)",
-        @"(?<type>\w+)/Unity\s*.*?\s*:\s*(?<desc>.*)"
+        @"(?<type>\w+)/{0}\s*\(\d+\):(?<spaceDesc>\s*)(?<desc>.*)",
+        @"(?<type>\w+)\s*{0}\s*:(?<spaceDesc>\s*)(?<desc>.*)",
+        @"(?<type>\w+)/{0}\s*.*?\s*:(?<spaceDesc>\s*)(?<desc>.*)",
     };
 
     List<Info> mInfos1;
     List<Info> mInfos2;
     List<Info> mInfos3;
     List<Info> mInfos4;
-    int mThreadCount = 4;
+    static int mThreadCount = 4;
 
     int mFinishFlag = 0;
-    bool mRefresh = false;
+    bool mLockUI = false;
+    DateTime mLockUIStartTime;
+    int mLockUISecond;
     Vector2 mContentScrollPos;
     Vector2 mContentScrollSize;
     Vector2 mDetailScrollPos;
@@ -165,6 +169,19 @@ public class AndroidLogCatWindow : EditorWindow
     bool mEnableError = true;
     Process mADBProcess;
 
+    List<string> mTags = new List<string>();
+    public List<string> tags
+    {
+        private set
+        {
+            mTags = value;
+        }
+        get
+        {
+            return mTags;
+        }
+    }
+
     public int selectId
     {
         get
@@ -173,7 +190,7 @@ public class AndroidLogCatWindow : EditorWindow
         }
     }
 
-    [MenuItem("Window/AndroidLogCatWindow")]
+    [MenuItem("Window/AndroidLogCatWindow(安卓日志窗口)")]
     static public void ShowWindow()
     {
         var tView = CreateInstance<AndroidLogCatWindow>();
@@ -186,6 +203,7 @@ public class AndroidLogCatWindow : EditorWindow
             "\n1、支持上下箭头、Home键、End键改变日志的显示." +
             "\n2、支持搜索指定关键字（不区分大小写），然后选择某条日志后，点输入框的×来定位到刚刚选中的日志." +
             "\n3、跳转到选中：置顶当前选中的日志" +
+            "\n4、支持显示指定标签，多个标签用|分隔" +
             "\n\n目前已知问题：" +
             "\n1、Unity2017.3.0f2以下版本存在部分中文乱码，建议用Unity2017.3.0f2及以上版本");
         tView.Show();
@@ -200,6 +218,8 @@ public class AndroidLogCatWindow : EditorWindow
         var tSplitterGUILayoutType = typeof(EditorWindow).Assembly.GetType("UnityEditor.SplitterGUILayout");
         mBeginVerticalSplit = tSplitterGUILayoutType.GetMethod("BeginVerticalSplit", BindingFlags.Static | BindingFlags.Public, null, new Type[] { tSplitterState, typeof(GUILayoutOption[]) }, null);
         mEndVerticalSplit = tSplitterGUILayoutType.GetMethod("EndVerticalSplit", BindingFlags.Static | BindingFlags.Public);
+
+        UpdateTags();
     }
 
     void OnGUI()
@@ -209,14 +229,13 @@ public class AndroidLogCatWindow : EditorWindow
 
         if (mFinishFlag >= mThreadCount)
         {
-            Debug.LogError("转换完成");
+            Debug.LogError(string.Format("转换完成.耗时：{0}s", mLockUISecond));
 
             mTotalInfos.AddRange(mInfos1);
             mTotalInfos.AddRange(mInfos2);
             mTotalInfos.AddRange(mInfos3);
             mTotalInfos.AddRange(mInfos4);
-            mFinishFlag = 0;
-            mRefresh = false;
+            ParseFinish();
 
             for (int i = 0, imax = mTotalInfos.Count; i < imax; i++)
             {
@@ -239,10 +258,18 @@ public class AndroidLogCatWindow : EditorWindow
 
             UpdateInfos();
         }
-        else if (mRefresh)
+        else if (mLockUI)
         {
+            var tSecond = Mathf.CeilToInt((float)(DateTime.Now - mLockUIStartTime).TotalSeconds);
+            if (mLockUISecond != tSecond)
+            {
+                mLockUISecond = tSecond;
+                ShowNotification(new GUIContent(string.Format("正在解析({0}s) ", mLockUISecond)));
+            }
             this.Repaint();
         }
+
+        EditorGUI.BeginDisabledGroup(mLockUI);
 
         //Start VerticalSplit
         if (mBeginVerticalSplit != null && mSplitterState != null)
@@ -272,6 +299,7 @@ public class AndroidLogCatWindow : EditorWindow
         {
             mEndVerticalSplit.Invoke(null, null);
         }
+        EditorGUI.EndDisabledGroup();
 
         if (mRelativeSizes != null && mSplitterState != null)
         {
@@ -335,6 +363,24 @@ public class AndroidLogCatWindow : EditorWindow
         StopADB();
     }
 
+    void UpdateTags()
+    {
+        var tHashSet = new HashSet<string>();
+        foreach (var item in tags)
+        {
+            if (string.IsNullOrEmpty(item)) continue;
+            tHashSet.Add(item);
+        }
+        if (tHashSet.Count == 0)
+        {
+            tags.Add(cUnityTag);
+        }
+        else
+        {
+            tags = tHashSet.ToList();
+        }
+    }
+
     void UpdateGUIStyle()
     {
         if (mContentStyle == null)
@@ -375,19 +421,60 @@ public class AndroidLogCatWindow : EditorWindow
     /// </summary>
     void DrawToolBar()
     {
-        EditorGUI.BeginDisabledGroup(mRefresh);
+        EditorGUI.BeginDisabledGroup(mLockUI);
         using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar, GUILayout.ExpandWidth(true)))
         {
             GUILayout.Label(new GUIContent("鼠标放上来查看说明", this.titleContent.tooltip), EditorStyles.toolbarButton, GUILayout.Width(100));
             GUILayout.Space(10);
 
+            if (GUILayout.Button("标签", EditorStyles.toolbarButton, GUILayout.Width(50)))
+            {
+                InputMiniWindow.ShowWindow<string>(new GUIContent("输入多个标签，格式以|分割"), new Vector2(300, 40), string.Join("|", tags.ToArray()), (pConfirm, pResult, pView) =>
+                {
+                    if (pConfirm && pResult != null)
+                    {
+                        var tNewTags = new HashSet<string>();
+                        var tResult = pResult as string;
+                        var tSplits = tResult.Split('|');
+                        var tError = false;
+                        foreach (var item in tSplits)
+                        {
+                            if (!string.IsNullOrEmpty(item))
+                            {
+                                tError = !Regex.IsMatch(item, @"^[a-zA-Z0-9]+$");
+
+                                if (tError) break;
+                                else
+                                {
+                                    tNewTags.Add(item);
+                                }
+                            }
+                        }
+
+                        if (tError)
+                        {
+                            Debug.LogError("格式错误！！！标签只能包含字母和数字");
+                        }
+                        else
+                        {
+                            tags = tNewTags.ToList();
+                            pView.Close();
+                        }
+                    }
+                    else
+                    {
+                        pView.Close();
+                    }
+                });
+            }
+
+            GUILayout.Space(10);
             if (GUILayout.Button("清除", EditorStyles.toolbarButton, GUILayout.Width(50)))
             {
                 ResetVarliable();
             }
 
             GUILayout.Space(10);
-
             GUI.backgroundColor = Color.red;
             EditorGUI.BeginDisabledGroup(mADBProcess != null);
             if (GUILayout.Button("转换", EditorStyles.toolbarButton, GUILayout.Width(50)))
@@ -462,7 +549,7 @@ public class AndroidLogCatWindow : EditorWindow
     /// </summary>
     void ClickParseBtn()
     {
-        if (mRefresh) return;
+        if (mLockUI) return;
 
         var tText = GUIUtility.systemCopyBuffer;
         if (string.IsNullOrEmpty(tText))
@@ -471,7 +558,9 @@ public class AndroidLogCatWindow : EditorWindow
             return;
         }
 
-        mRefresh = true;
+        mLockUI = true;
+        mLockUISecond = -1;
+        mLockUIStartTime = DateTime.Now;
         ResetVarliable();
 
         var tTexts = tText.Split('\r', '\n');
@@ -513,7 +602,10 @@ public class AndroidLogCatWindow : EditorWindow
         }
         finally
         {
-            if (tLength == 0) mRefresh = false;
+            if (tLength == 0)
+            {
+                ParseFinish();
+            }
         }
     }
 
@@ -613,61 +705,121 @@ public class AndroidLogCatWindow : EditorWindow
         }
 
         var tMsg = string.Empty;
-        var tMsgType = MessageType.None;
         var tTrace = string.Empty;
         for (int i = 0, imax = tInfo.msgs.Length; i < imax; i++)
         {
-            var tStr = tInfo.msgs[i];
-            if (string.IsNullOrEmpty(tStr)) continue;
-
-            Match tMatch = null;
-            foreach (var item in sRegexs)
-            {
-                tMatch = Regex.Match(tStr, item);
-                if (tMatch.Success) break;
-            }
-
-            if (!tMatch.Success) continue;
-
-            tStr = tMatch.Groups["desc"].Value;
-            var tType = tMatch.Groups["type"].Value;
-            switch (tType)
-            {
-                case "I":
-                    tMsgType = MessageType.Info;
-                    break;
-                case "W":
-                    tMsgType = MessageType.Warning;
-                    break;
-                case "E":
-                    tMsgType = MessageType.Error;
-                    break;
-            }
-            if (string.IsNullOrEmpty(tStr)) continue;
-
-            if (string.IsNullOrEmpty(tMsg))
-            {
-                tMsg = tStr;
-            }
-            else
-            {
-                tTrace += tStr + "\n";
-            }
-
-            if (tStr.IndexOf("(Filename:") != -1)
-            {
-                if (!string.IsNullOrEmpty(tMsg.Trim()) && !string.IsNullOrEmpty(tTrace.Trim()))
-                {
-                    tInfoList.Add(new Info() { msg = tMsg, trace = tTrace, type = tMsgType });
-                }
-                tMsg = string.Empty;
-                tTrace = string.Empty;
-            }
+            HandleMessage(tInfo.msgs[i], (pMsgType, pInfo) => { tInfoList.Add(pInfo); }, ref tMsg, ref tTrace);
         }
 
         mFinishFlag++;
     }
 
+    /// <summary>
+    /// 处理单条日志
+    /// </summary>
+    /// <param name="pFullMsg"></param>
+    /// <param name="pCallBack"></param>
+    /// <param name="pShortMsg"></param>
+    /// <param name="pTrace"></param>
+    /// <returns></returns>
+    bool HandleMessage(string pFullMsg, Action<MessageType, Info> pCallBack, ref string pShortMsg, ref string pTrace)
+    {
+        if (string.IsNullOrEmpty(pFullMsg)) return false;
+
+        Match tMatch = null;
+        var tTag = string.Empty;
+        foreach (var tag in tags)
+        {
+            if (pFullMsg.IndexOf(tag) == -1)
+            {
+                continue;
+            }
+
+            var tIsMatch = false;
+            foreach (var item in sRegexs)
+            {
+                tTag = tag;
+                tMatch = Regex.Match(pFullMsg, string.Format(item, tag));
+                if (tMatch.Success)
+                {
+                    tIsMatch = true;
+                    break;
+                }
+            }
+
+            if (tIsMatch) break;
+        }
+
+        if (tMatch == null || !tMatch.Success) return false;
+
+        pFullMsg = tMatch.Groups["desc"].Value;
+        var tType = tMatch.Groups["type"].Value;
+        var tMsgType = MessageType.None;
+        switch (tType)
+        {
+            //Info
+            case "I":
+            //Verbose
+            case "V":
+            //Debug
+            case "D":
+                tMsgType = MessageType.Info;
+                break;
+            //Warning
+            case "W":
+                tMsgType = MessageType.Warning;
+                break;
+            //Assert
+            case "A":
+            //Error
+            case "E":
+                tMsgType = MessageType.Error;
+                break;
+        }
+        if (tMsgType == MessageType.None || string.IsNullOrEmpty(pFullMsg)) return false;
+
+        if (string.IsNullOrEmpty(pShortMsg))
+        {
+            pShortMsg = pFullMsg;
+        }
+        else
+        {
+            pTrace += tMatch.Groups["spaceDesc"].Value + pFullMsg + "\n";
+        }
+
+        if ((tTag == cUnityTag && pFullMsg.IndexOf("(Filename:") != -1))
+        {
+            if (!string.IsNullOrEmpty(pShortMsg.Trim()) && !string.IsNullOrEmpty(pTrace.Trim()))
+            {
+                var tInfo = new Info() { msg = pShortMsg, trace = pTrace, type = tMsgType, tag = tTag };
+                pCallBack(tMsgType, tInfo);
+            }
+            pShortMsg = string.Empty;
+            pTrace = string.Empty;
+        }
+        else if (tTag != cUnityTag)
+        {
+            if (!string.IsNullOrEmpty(pShortMsg.Trim()))
+            {
+                var tInfo = new Info() { msg = pShortMsg, trace = pTrace, type = tMsgType, tag = tTag };
+                pCallBack(tMsgType, tInfo);
+            }
+            pShortMsg = string.Empty;
+            pTrace = string.Empty;
+        }
+
+        return true;
+    }
+
+    void ParseFinish()
+    {
+        mFinishFlag = 0;
+        mLockUI = false;
+        mLockUISecond = 0;
+        RemoveNotification();
+    }
+
+    #region ADB
     /// <summary>
     /// 开始监听ADB
     /// </summary>
@@ -694,7 +846,7 @@ public class AndroidLogCatWindow : EditorWindow
 
         using (var tStream = mADBProcess.StandardInput)
         {
-            tStream.WriteLine("logcat -s Unity");
+            tStream.WriteLine("logcat");
             tStream.Close();
         }
 
@@ -765,81 +917,112 @@ public class AndroidLogCatWindow : EditorWindow
             if (mADBMsgs.Count == 0) return;
 
             var tMsg = string.Empty;
-            var tMsgType = MessageType.None;
             var tTrace = string.Empty;
             var tLastIndex = 0;
             var tChange = false;
             for (int i = 0, imax = mADBMsgs.Count; i < imax; i++)
             {
-                var tStr = mADBMsgs[i];
-                if (string.IsNullOrEmpty(tStr)) continue;
+                var tResult = HandleMessage(mADBMsgs[i], (pMsgType, pInfo) =>
+                 {
+                     pInfo.id = mTotalInfos.Count;
+                     mTotalInfos.Add(pInfo);
+                     switch (pMsgType)
+                     {
+                         case MessageType.Info:
+                             mInfos_Info.Add(pInfo);
+                             break;
+                         case MessageType.Warning:
+                             mInfos_Warning.Add(pInfo);
+                             break;
+                         case MessageType.Error:
+                             mInfos_Error.Add(pInfo);
+                             break;
+                     }
 
-                Match tMatch = null;
-                foreach (var item in sRegexs)
-                {
-                    tMatch = Regex.Match(tStr, item);
-                    if (tMatch.Success) break;
-                }
+                 }, ref tMsg, ref tTrace);
 
-                if (!tMatch.Success) continue;
-
-                tStr = tMatch.Groups["desc"].Value;
-                var tType = tMatch.Groups["type"].Value;
-                switch (tType)
+                if (tResult)
                 {
-                    case "I":
-                        tMsgType = MessageType.Info;
-                        break;
-                    case "W":
-                        tMsgType = MessageType.Warning;
-                        break;
-                    case "E":
-                        tMsgType = MessageType.Error;
-                        break;
-                }
-                if (string.IsNullOrEmpty(tStr)) continue;
-
-                if (string.IsNullOrEmpty(tMsg))
-                {
-                    tMsg = tStr;
-                }
-                else
-                {
-                    tTrace += tStr + "\n";
-                }
-
-                if (tStr.IndexOf("(Filename:") != -1)
-                {
-                    if (!string.IsNullOrEmpty(tMsg.Trim()) && !string.IsNullOrEmpty(tTrace.Trim()))
-                    {
-                        var tInfo = new Info() { msg = tMsg, trace = tTrace, type = tMsgType, id = mTotalInfos.Count };
-                        mTotalInfos.Add(tInfo);
-                        switch (tMsgType)
-                        {
-                            case MessageType.Info:
-                                mInfos_Info.Add(tInfo);
-                                break;
-                            case MessageType.Warning:
-                                mInfos_Warning.Add(tInfo);
-                                break;
-                            case MessageType.Error:
-                                mInfos_Error.Add(tInfo);
-                                break;
-                        }
-                    }
-                    tMsg = string.Empty;
-                    tTrace = string.Empty;
                     tLastIndex = i;
-                    tChange = true;
                 }
+
+                tChange |= tResult;
             }
 
             if (tChange)
             {
                 UpdateInfos(false);
                 mADBMsgs.RemoveRange(0, tLastIndex + 1);
-                this.Repaint();
+                Repaint();
             }
         }
     }
+    #endregion ADB
 }
+
+#region InputMiniWindow
+class InputMiniWindow : EditorWindow
+{
+    static public void ShowWindow<T>(GUIContent pTitle, Vector2 pSize, object pDefaultValue, Action<bool, object, EditorWindow> pCallBack)
+    {
+        var tView = CreateInstance(typeof(InputMiniWindow)) as InputMiniWindow;
+        tView.titleContent = pTitle;
+        tView.mType = typeof(T);
+        tView.mDefaultValue = pDefaultValue;
+        tView.mCallBack = pCallBack;
+        tView.ShowUtility();
+        tView.minSize = pSize;
+        tView.maxSize = pSize;
+    }
+
+    Type mType;
+    object mDefaultValue;
+    Action<bool, object, EditorWindow> mCallBack;
+
+    void OnGUI()
+    {
+        using (new EditorGUILayout.VerticalScope())
+        {
+            DrawUI();
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                if (GUILayout.Button("确定"))
+                {
+                    CallBack(true);
+                }
+                if (GUILayout.Button("取消"))
+                {
+                    CallBack(false);
+                }
+            }
+        }
+    }
+
+    void DrawUI()
+    {
+        if (mType == typeof(string))
+        {
+            SetValue(EditorGUILayout.TextField(GetValue() as string ?? string.Empty));
+        }
+    }
+
+    void SetValue(object pValue)
+    {
+        mDefaultValue = pValue;
+    }
+
+    object GetValue()
+    {
+        return mDefaultValue;
+    }
+
+    void CallBack(bool pConfirm)
+    {
+        if (mCallBack != null)
+        {
+            mCallBack(pConfirm, GetValue(), this);
+        }
+    }
+}
+#endregion InputMiniWindow
