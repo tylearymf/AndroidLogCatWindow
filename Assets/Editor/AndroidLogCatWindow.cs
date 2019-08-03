@@ -167,6 +167,7 @@ public class AndroidLogCatWindow : EditorWindow
     bool mEnableInfo = true;
     bool mEnableWarning = true;
     bool mEnableError = true;
+    bool mEnableForceSelectLast = false;
     Process mADBProcess;
 
     List<string> mTags = new List<string>();
@@ -197,15 +198,23 @@ public class AndroidLogCatWindow : EditorWindow
         tView.titleContent = new GUIContent(
             "AndroidLogCat", "安卓日志工具." +
             "\n使用说明：" +
-            "\n1、从其他地方复制日志到系统剪贴板，点击转换按钮，等待数秒后就会格式好所有的日志." +
+            "\n1、从其他地方复制日志到系统剪贴板，点击解析按钮，等待数秒后就会格式好所有的日志." +
             "\n2、支持adb连接实时打印日志" +
+            "\n\n按钮说明：" +
+            "\n1、标签设置：支持显示指定标签，多个标签用|分隔" +
+            "\n2、清除：清除当前日志" +
+            "\n3、解析：解析剪贴板中的日志" +
+            "\n4、跳转到选中：置顶当前选中的日志" +
+            "\n5、输入框：支持搜索指定关键字（不区分大小写）" +
+            "\n6、强制选中并显示最后一条：开启后，默认选中最新一条日志并显示" +
             "\n\n使用技巧：" +
             "\n1、支持上下箭头、Home键、End键改变日志的显示." +
-            "\n2、支持搜索指定关键字（不区分大小写），然后选择某条日志后，点输入框的×来定位到刚刚选中的日志." +
-            "\n3、跳转到选中：置顶当前选中的日志" +
-            "\n4、支持显示指定标签，多个标签用|分隔" +
+            "\n2、输入框输入关键字后，选择某条日志后，点输入框的×来定位到刚刚选中的日志." +
             "\n\n目前已知问题：" +
-            "\n1、Unity2017.3.0f2以下版本存在部分中文乱码，建议用Unity2017.3.0f2及以上版本");
+            "\n1、开启ADB后无法显示日志的时候，停掉再点开启就可以了" +
+            "\n2、Unity2017.3.0f2以下版本存在部分中文乱码，建议用Unity2017.3.0f2及以上版本"
+            );
+
         tView.Show();
     }
 
@@ -229,7 +238,7 @@ public class AndroidLogCatWindow : EditorWindow
 
         if (mFinishFlag >= mThreadCount)
         {
-            Debug.LogError(string.Format("转换完成.耗时：{0}s", mLockUISecond));
+            Debug.LogError(string.Format("解析完成.耗时：{0}s", mLockUISecond));
 
             mTotalInfos.AddRange(mInfos1);
             mTotalInfos.AddRange(mInfos2);
@@ -270,6 +279,12 @@ public class AndroidLogCatWindow : EditorWindow
         }
 
         EditorGUI.BeginDisabledGroup(mLockUI);
+
+        if (mEnableForceSelectLast && mShowInfos.Count > 0)
+        {
+            mSelectInfo = mShowInfos[mShowInfos.Count - 1];
+            mNextFrameLocation = true;
+        }
 
         //Start VerticalSplit
         if (mBeginVerticalSplit != null && mSplitterState != null)
@@ -427,7 +442,7 @@ public class AndroidLogCatWindow : EditorWindow
             GUILayout.Label(new GUIContent("鼠标放上来查看说明", this.titleContent.tooltip), EditorStyles.toolbarButton, GUILayout.Width(100));
             GUILayout.Space(10);
 
-            if (GUILayout.Button("标签", EditorStyles.toolbarButton, GUILayout.Width(50)))
+            if (GUILayout.Button("标签设置", EditorStyles.toolbarButton, GUILayout.Width(50)))
             {
                 InputMiniWindow.ShowWindow<string>(new GUIContent("输入多个标签，格式以|分割"), new Vector2(300, 40), string.Join("|", tags.ToArray()), (pConfirm, pResult, pView) =>
                 {
@@ -475,11 +490,11 @@ public class AndroidLogCatWindow : EditorWindow
             }
 
             GUILayout.Space(10);
-            GUI.backgroundColor = Color.red;
+            GUI.backgroundColor = Color.yellow;
             EditorGUI.BeginDisabledGroup(mADBProcess != null);
-            if (GUILayout.Button("转换", EditorStyles.toolbarButton, GUILayout.Width(50)))
+            if (GUILayout.Button("解析", EditorStyles.toolbarButton, GUILayout.Width(50)))
             {
-                if (EditorUtility.DisplayDialog("提示", "是否确认转换剪贴板中的日志", "确定", "取消"))
+                if (EditorUtility.DisplayDialog("提示", "是否确认解析剪贴板中的日志", "确定", "取消"))
                 {
                     ClickParseBtn();
                 }
@@ -498,9 +513,8 @@ public class AndroidLogCatWindow : EditorWindow
             EditorGUILayout.LabelField(tContent, GUILayout.Width(120));
             GUILayout.Space(10);
 
-
             EditorGUI.BeginDisabledGroup(mADBProcess != null);
-            if (GUILayout.Button("StartADB", EditorStyles.toolbarButton, GUILayout.Width(80)))
+            if (GUILayout.Button("开启ADB", EditorStyles.toolbarButton, GUILayout.Width(80)))
             {
                 ResetVarliable();
                 StartADB();
@@ -508,7 +522,7 @@ public class AndroidLogCatWindow : EditorWindow
             EditorGUI.EndDisabledGroup();
 
             EditorGUI.BeginDisabledGroup(mADBProcess == null);
-            if (GUILayout.Button("StopADB", EditorStyles.toolbarButton, GUILayout.Width(80)))
+            if (GUILayout.Button("停止ADB", EditorStyles.toolbarButton, GUILayout.Width(80)))
             {
                 StopADB();
             }
@@ -540,6 +554,8 @@ public class AndroidLogCatWindow : EditorWindow
                 UpdateInfos();
                 mNextFrameLocation = true;
             }
+
+            mEnableForceSelectLast = GUILayout.Toggle(mEnableForceSelectLast, new GUIContent("强制选中并显示最后一条"), EditorStyles.toolbarButton, GUILayout.Width(120));
         }
         EditorGUI.EndDisabledGroup();
     }
@@ -850,11 +866,14 @@ public class AndroidLogCatWindow : EditorWindow
             tStream.Close();
         }
 
-        mADBProcess.BeginOutputReadLine();
-        mADBProcess.BeginErrorReadLine();
+        EditorApplication.delayCall += () =>
+        {
+            mADBProcess.BeginOutputReadLine();
+            mADBProcess.BeginErrorReadLine();
 
-        EditorApplication.update -= ParseADBMsg;
-        EditorApplication.update += ParseADBMsg;
+            EditorApplication.update -= ParseADBMsg;
+            EditorApplication.update += ParseADBMsg;
+        };
     }
 
     /// <summary>
