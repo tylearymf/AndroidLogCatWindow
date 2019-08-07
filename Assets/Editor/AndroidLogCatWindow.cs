@@ -23,6 +23,7 @@ public class AndroidLogCatWindow : EditorWindow
         public string trace { set; private get; }
         public int index { private set; get; }
         public int id { set; get; }
+        public DateTime? date { set; get; }
 
         string mTrace;
         string mMsg;
@@ -42,7 +43,16 @@ public class AndroidLogCatWindow : EditorWindow
         {
             if (string.IsNullOrEmpty(mMsg))
             {
-                mMsg = string.Format("{0} {1}: {2}", id, tag, msg);
+                var tDateStr = string.Empty;
+                if (!date.HasValue)
+                {
+                    //tDateStr = "00/00 00:00:00.000";
+                }
+                else
+                {
+                    tDateStr = date.Value.ToString("MM/dd HH:mm:ss.fff");
+                }
+                mMsg = string.Format("<color=#CBCBCB>{0} {1} {2}</color>: {3}", id, tag, tDateStr, msg);
             }
             return mMsg;
         }
@@ -121,12 +131,13 @@ public class AndroidLogCatWindow : EditorWindow
     #endregion
 
     const string cUnityTag = "Unity";
+    const string cDateRegex = @"(?<month>\d+)-(?<day>\d+)\s(?<hour>\d+):(?<minute>\d+):(?<second>\d+)(\.(?<millisecond>\d+))?";
     //适配不同log日志格式，如有新增格式，加新的正则即可
     static string[] sRegexs = new string[]
     {
-        @"(?<type>\w+)/{0}\s*\(\d+\):(?<spaceDesc>\s*)(?<desc>.*)",
-        @"(?<type>\w+)\s*{0}\s*:(?<spaceDesc>\s*)(?<desc>.*)",
-        @"(?<type>\w+)/{0}\s*.*?\s*:(?<spaceDesc>\s*)(?<desc>.*)",
+         @"(?<type>\w+)/{0}\s*\(\d+\):(?<spaceDesc>\s*)(?<desc>.*)",
+         @"(?<type>\w+)\s*{0}\s*:(?<spaceDesc>\s*)(?<desc>.*)",
+         @"(?<type>\w+)/{0}\s*.*?\s*:(?<spaceDesc>\s*)(?<desc>.*)",
     };
 
     List<Info> mInfos1;
@@ -198,12 +209,12 @@ public class AndroidLogCatWindow : EditorWindow
         tView.titleContent = new GUIContent(
             "AndroidLogCat", "安卓日志工具." +
             "\n使用说明：" +
-            "\n1、从其他地方复制日志到系统剪贴板，点击解析按钮，等待数秒后就会格式好所有的日志." +
+            "\n1、支持解析日志文本" +
             "\n2、支持adb连接实时打印日志" +
             "\n\n按钮说明：" +
             "\n1、标签设置：支持显示指定标签，多个标签用|分隔" +
             "\n2、清除：清除当前日志" +
-            "\n3、解析：解析剪贴板中的日志" +
+            "\n3、解析：解析选中的日志文件" +
             "\n4、跳转到选中：置顶当前选中的日志" +
             "\n5、输入框：支持搜索指定关键字（不区分大小写）" +
             "\n6、强制选中并显示最后一条：开启后，默认选中最新一条日志并显示" +
@@ -494,10 +505,7 @@ public class AndroidLogCatWindow : EditorWindow
             EditorGUI.BeginDisabledGroup(mADBProcess != null);
             if (GUILayout.Button("解析", EditorStyles.toolbarButton, GUILayout.Width(50)))
             {
-                if (EditorUtility.DisplayDialog("提示", "是否确认解析剪贴板中的日志", "确定", "取消"))
-                {
-                    ClickParseBtn();
-                }
+                ClickParseBtn();
             }
             EditorGUI.EndDisabledGroup();
             GUI.backgroundColor = Color.white;
@@ -567,20 +575,19 @@ public class AndroidLogCatWindow : EditorWindow
     {
         if (mLockUI) return;
 
-        var tText = GUIUtility.systemCopyBuffer;
-        if (string.IsNullOrEmpty(tText))
+        var tFilePath = EditorUtility.OpenFilePanel("日志文件", string.Empty, string.Empty);
+        if (string.IsNullOrEmpty(tFilePath))
         {
-            EditorUtility.DisplayDialog("提示", "剪贴板为空", "确定");
+            EditorUtility.DisplayDialog("提示", "未选择日志文件", "确定");
             return;
         }
+        var tTexts = File.ReadAllLines(tFilePath);
+        var tLength = tTexts.Length;
 
         mLockUI = true;
         mLockUISecond = -1;
         mLockUIStartTime = DateTime.Now;
         ResetVarliable();
-
-        var tTexts = tText.Split('\r', '\n');
-        var tLength = tTexts.Length;
 
         try
         {
@@ -744,6 +751,7 @@ public class AndroidLogCatWindow : EditorWindow
 
         Match tMatch = null;
         var tTag = string.Empty;
+        var tRegex = string.Empty;
         foreach (var tag in tags)
         {
             if (pFullMsg.IndexOf(tag) == -1)
@@ -755,6 +763,7 @@ public class AndroidLogCatWindow : EditorWindow
             foreach (var item in sRegexs)
             {
                 tTag = tag;
+                tRegex = item;
                 tMatch = Regex.Match(pFullMsg, string.Format(item, tag));
                 if (tMatch.Success)
                 {
@@ -768,7 +777,7 @@ public class AndroidLogCatWindow : EditorWindow
 
         if (tMatch == null || !tMatch.Success) return false;
 
-        pFullMsg = tMatch.Groups["desc"].Value;
+        var tDesc = tMatch.Groups["desc"].Value;
         var tType = tMatch.Groups["type"].Value;
         var tMsgType = MessageType.None;
         switch (tType)
@@ -792,22 +801,47 @@ public class AndroidLogCatWindow : EditorWindow
                 tMsgType = MessageType.Error;
                 break;
         }
-        if (tMsgType == MessageType.None || string.IsNullOrEmpty(pFullMsg)) return false;
+        if (tMsgType == MessageType.None || string.IsNullOrEmpty(tDesc)) return false;
 
         if (string.IsNullOrEmpty(pShortMsg))
         {
-            pShortMsg = pFullMsg;
+            pShortMsg = tDesc;
         }
         else
         {
-            pTrace += tMatch.Groups["spaceDesc"].Value + pFullMsg + "\n";
+            pTrace += tMatch.Groups["spaceDesc"].Value + tDesc + "\n";
         }
 
-        if ((tTag == cUnityTag && pFullMsg.IndexOf("(Filename:") != -1))
+        if ((tTag == cUnityTag && tDesc.IndexOf("(Filename:") != -1))
         {
             if (!string.IsNullOrEmpty(pShortMsg.Trim()) && !string.IsNullOrEmpty(pTrace.Trim()))
             {
-                var tInfo = new Info() { msg = pShortMsg, trace = pTrace, type = tMsgType, tag = tTag };
+                var tDateMatch = Regex.Match(pFullMsg, cDateRegex);
+                DateTime? tDate = null;
+
+                if (tDateMatch.Success)
+                {
+                    var tMonth = tDateMatch.Groups["month"].Value;
+                    var tDay = tDateMatch.Groups["day"].Value;
+                    var tHour = tDateMatch.Groups["hour"].Value;
+                    var tMinute = tDateMatch.Groups["minute"].Value;
+                    var tSecond = tDateMatch.Groups["second"].Value;
+                    var tMillisecond = tDateMatch.Groups["millisecond"].Value;
+                    try
+                    {
+                        tDate = new DateTime(DateTime.Now.Year, int.Parse(tMonth), int.Parse(tDay), int.Parse(tHour), int.Parse(tMinute), int.Parse(tSecond), int.Parse(tMillisecond));
+                    }
+                    catch { }
+                }
+
+                var tInfo = new Info()
+                {
+                    msg = pShortMsg,
+                    trace = pTrace,
+                    type = tMsgType,
+                    tag = tTag,
+                    date = tDate,
+                };
                 pCallBack(tMsgType, tInfo);
             }
             pShortMsg = string.Empty;
